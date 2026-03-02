@@ -289,6 +289,10 @@ fn build_review_changes_command(
     let script = format!(
         r#"{profile_path_resolver}
 NEW_PROFILE={new_profile}
+if [ -z "${{PROFILE_PATH:-}}" ]; then
+  echo "Unable to resolve profile path for derivation diff, skipping review."
+  exit 0
+fi
 if [ ! -e "$PROFILE_PATH" ] && [ ! -h "$PROFILE_PATH" ]; then
   echo "No existing generation found at $PROFILE_PATH, skipping derivation diff."
   exit 0
@@ -413,6 +417,7 @@ fn highlight_review_line(line: &str, use_colors: bool) -> String {
 
     if line.starts_with("No existing generation found")
         || line.starts_with("No derivation changes detected")
+        || line.starts_with("Unable to resolve profile path")
         || line.starts_with("Unable to run 'nix store diff-closures'")
     {
         return ansi_wrap(use_colors, "33", line);

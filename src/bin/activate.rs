@@ -315,7 +315,11 @@ pub enum WaitError {
     #[error("Error waiting for activation: {0}")]
     Waiting(#[from] DangerZoneError),
 }
-pub async fn wait(temp_path: PathBuf, closure: String, activation_timeout: Option<u16>) -> Result<(), WaitError> {
+pub async fn wait(
+    temp_path: PathBuf,
+    closure: String,
+    activation_timeout: Option<u16>,
+) -> Result<(), WaitError> {
     let lock_path = deploy::make_lock_path(&temp_path, &closure);
 
     let (created, done) = mpsc::channel(1);
@@ -613,9 +617,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .map_err(|x| Box::new(x) as Box<dyn std::error::Error>),
 
-        SubCommand::Wait(wait_opts) => wait(wait_opts.temp_path, wait_opts.closure, wait_opts.activation_timeout)
-            .await
-            .map_err(|x| Box::new(x) as Box<dyn std::error::Error>),
+        SubCommand::Wait(wait_opts) => wait(
+            wait_opts.temp_path,
+            wait_opts.closure,
+            wait_opts.activation_timeout,
+        )
+        .await
+        .map_err(|x| Box::new(x) as Box<dyn std::error::Error>),
 
         SubCommand::Revoke(revoke_opts) => revoke(get_profile_path(
             revoke_opts.profile_path,

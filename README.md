@@ -39,7 +39,7 @@ Check out `deploy --help` for CLI flags! Remember to check there before making o
 If you want an `nh`-style deploy UX, use:
 - Build tree visualization and derivation change review are enabled by default.
 - Use `--no-build-tree` to disable streaming build trees through `nix-output-monitor` (`nom`).
-- Use `--no-review-changes` to disable pre-activation derivation diffing (`nix store diff-closures`).
+- Use `--no-review-changes` to disable pre-activation derivation diffing (`nix store diff-closures`) with colored highlighting.
 
 There is also an `activate` binary though this should be ignored, it is only used internally (on the deployed system) and for testing/hacking purposes.
 

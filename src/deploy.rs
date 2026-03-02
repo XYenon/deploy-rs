@@ -328,6 +328,136 @@ exit 0"#,
     command
 }
 
+fn ansi_wrap(use_colors: bool, style: &str, text: &str) -> String {
+    if use_colors {
+        format!("\x1b[{}m{}\x1b[0m", style, text)
+    } else {
+        text.to_string()
+    }
+}
+
+fn review_colors_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none()
+}
+
+fn colorize_size_delta(size_delta: &str, use_colors: bool) -> String {
+    if size_delta.starts_with('+') {
+        ansi_wrap(use_colors, "32", size_delta)
+    } else if size_delta.starts_with('-') {
+        ansi_wrap(use_colors, "31", size_delta)
+    } else {
+        size_delta.to_string()
+    }
+}
+
+fn highlight_diff_closures_line(line: &str, use_colors: bool) -> Option<String> {
+    let (package, change) = line.split_once(": ")?;
+
+    if let Some((versions, size_delta)) = change
+        .rsplit_once(", ")
+        .filter(|(_, delta)| delta.starts_with('+') || delta.starts_with('-'))
+    {
+        if let Some((before, after)) = versions.split_once(" → ") {
+            let (name_style, before_style, arrow_style, after_style) = if before.trim() == "∅" {
+                ("1;32", "2;31", "32", "32")
+            } else if after.trim() == "∅" {
+                ("1;31", "31", "31", "2;32")
+            } else {
+                ("1;33", "33", "33", "33")
+            };
+
+            return Some(format!(
+                "{}: {} {} {}, {}",
+                ansi_wrap(use_colors, name_style, package),
+                ansi_wrap(use_colors, before_style, before),
+                ansi_wrap(use_colors, arrow_style, "→"),
+                ansi_wrap(use_colors, after_style, after),
+                colorize_size_delta(size_delta, use_colors)
+            ));
+        }
+    }
+
+    if let Some((before, after)) = change.split_once(" → ") {
+        let (name_style, before_style, arrow_style, after_style) = if before.trim() == "∅" {
+            ("1;32", "2;31", "32", "32")
+        } else if after.trim() == "∅" {
+            ("1;31", "31", "31", "2;32")
+        } else {
+            ("1;33", "33", "33", "33")
+        };
+
+        return Some(format!(
+            "{}: {} {} {}",
+            ansi_wrap(use_colors, name_style, package),
+            ansi_wrap(use_colors, before_style, before),
+            ansi_wrap(use_colors, arrow_style, "→"),
+            ansi_wrap(use_colors, after_style, after),
+        ));
+    }
+
+    if change.starts_with('+') || change.starts_with('-') {
+        return Some(format!(
+            "{}: {}",
+            ansi_wrap(use_colors, "1;36", package),
+            colorize_size_delta(change, use_colors)
+        ));
+    }
+
+    None
+}
+
+fn highlight_review_line(line: &str, use_colors: bool) -> String {
+    if line.starts_with("Derivation changes for ") {
+        return ansi_wrap(use_colors, "1;36", line);
+    }
+
+    if line.starts_with("No existing generation found")
+        || line.starts_with("No derivation changes detected")
+        || line.starts_with("Unable to run 'nix store diff-closures'")
+    {
+        return ansi_wrap(use_colors, "33", line);
+    }
+
+    if line.starts_with("warning:") {
+        return ansi_wrap(use_colors, "33", line);
+    }
+
+    if line.starts_with("error:") {
+        return ansi_wrap(use_colors, "31", line);
+    }
+
+    highlight_diff_closures_line(line, use_colors).unwrap_or_else(|| line.to_string())
+}
+
+fn highlight_review_output(output: &str, use_colors: bool) -> String {
+    let mut rendered = String::with_capacity(output.len());
+
+    for chunk in output.split_inclusive('\n') {
+        if let Some(line) = chunk.strip_suffix('\n') {
+            rendered.push_str(&highlight_review_line(line, use_colors));
+            rendered.push('\n');
+        } else {
+            rendered.push_str(&highlight_review_line(chunk, use_colors));
+        }
+    }
+
+    rendered
+}
+
+fn print_review_output(output: &[u8], use_colors: bool, stderr: bool) {
+    if output.is_empty() {
+        return;
+    }
+
+    let highlighted = highlight_review_output(&String::from_utf8_lossy(output), use_colors);
+
+    if stderr {
+        eprint!("{}", highlighted);
+    } else {
+        print!("{}", highlighted);
+    }
+}
+
 #[test]
 fn test_shell_quote() {
     assert_eq!(shell_quote("a'b"), "'a'\"'\"'b'");
@@ -347,6 +477,30 @@ fn test_review_changes_command_builder_with_explicit_profile_path() {
     assert!(command.contains("/nix/var/nix/profiles/system"));
     assert!(command.contains("/nix/store/new-profile"));
     assert!(command.contains("diff-closures"));
+}
+
+#[test]
+fn test_highlight_diff_closures_line_without_color_change() {
+    assert_eq!(
+        highlight_diff_closures_line("bluez-qt: +12.6 KiB", false),
+        Some("bluez-qt: +12.6 KiB".to_string())
+    );
+}
+
+#[test]
+fn test_highlight_diff_closures_line_with_color_change() {
+    let rendered = highlight_diff_closures_line("kdeconnect: 20.08.2 → ∅, -6597.8 KiB", true);
+
+    assert!(rendered.is_some());
+    assert!(rendered.unwrap().contains("\x1b["));
+}
+
+#[test]
+fn test_highlight_review_output_preserves_newlines() {
+    assert_eq!(
+        highlight_review_output("line1\nline2\n", false),
+        "line1\nline2\n".to_string()
+    );
 }
 
 #[derive(Error, Debug)]
@@ -379,7 +533,9 @@ async fn review_profile_changes(
     let mut ssh_review_command = Command::new("ssh");
     ssh_review_command
         .arg(ssh_addr)
-        .stdin(std::process::Stdio::piped());
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
     for ssh_opt in &deploy_data.merged_settings.ssh_opts {
         ssh_review_command.arg(ssh_opt);
@@ -401,15 +557,19 @@ async fn review_profile_changes(
             .map_err(ReviewProfileChangesError::SSHReview)?;
     }
 
-    let ssh_review_exit_status = ssh_review_child
-        .wait()
+    let ssh_review_output = ssh_review_child
+        .wait_with_output()
         .await
         .map_err(ReviewProfileChangesError::SSHReview)?;
 
-    if ssh_review_exit_status.code() != Some(0) {
+    let use_colors = review_colors_enabled();
+    print_review_output(&ssh_review_output.stdout, use_colors, false);
+    print_review_output(&ssh_review_output.stderr, use_colors, true);
+
+    if ssh_review_output.status.code() != Some(0) {
         warn!(
             "Change-review command exited with status {:?}; continuing deployment",
-            ssh_review_exit_status.code()
+            ssh_review_output.status.code()
         );
     }
 

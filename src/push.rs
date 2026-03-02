@@ -295,7 +295,7 @@ pub async fn build_profile_remotely(
         .args(data.extra_build_args)
         .env("NIX_SSHOPTS", ssh_opts_str.clone());
 
-    run_build_command(build_command, data.build_tree).await?;
+    run_build_command(build_command, data.build_tree && data.supports_flakes).await?;
 
     Ok(())
 }

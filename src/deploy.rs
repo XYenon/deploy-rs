@@ -289,11 +289,11 @@ fn build_review_changes_command(
     let script = format!(
         r#"{profile_path_resolver}
 NEW_PROFILE={new_profile}
-CURRENT_PROFILE="$(readlink -f "$PROFILE_PATH" 2>/dev/null || true)"
-if [ -z "$CURRENT_PROFILE" ]; then
+if [ ! -e "$PROFILE_PATH" ] && [ ! -h "$PROFILE_PATH" ]; then
   echo "No existing generation found at $PROFILE_PATH, skipping derivation diff."
   exit 0
 fi
+CURRENT_PROFILE="$(readlink -f "$PROFILE_PATH")"
 if [ "$CURRENT_PROFILE" = "$NEW_PROFILE" ]; then
   echo "No derivation changes detected for $PROFILE_PATH."
   exit 0
@@ -309,6 +309,15 @@ exit 0"#,
         profile_path_resolver = build_profile_path_resolver(profile_info),
         new_profile = shell_quote(closure)
     );
+
+    // Replace newlines with shell-compatible separators to produce a single-line
+    // script. SSH command transmission can strip newlines, causing syntax errors
+    // on the remote side. Use spaces after `then`/`else` (not `;`) to avoid
+    // empty compound lists, and `;` elsewhere as a command separator.
+    let script = script
+        .replace("then\n", "then ")
+        .replace("else\n", "else ")
+        .replace('\n', "; ");
 
     let mut command = format!("sh -c {}", shell_quote(&script));
 

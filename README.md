@@ -118,7 +118,7 @@ In the above configuration, `deploy-rs` is built from the flake, not from nixpkg
 
 ### Profile
 
-This is the core of how `deploy-rs` was designed, any number of these can run on a node, as any user (see further down for specifying user information). If you want to mimic the behaviour of traditional tools like NixOps or Morph, try just defining one `profile` called `system`, as root, containing a nixosSystem, and you can even similarly use [home-manager](https://github.com/nix-community/home-manager) on any non-privileged user.
+This is the core of how `deploy-rs` was designed, any number of these can run on a node, as any user (see further down for specifying user information). If you want to mimic the behaviour of traditional tools like NixOps or Morph, try just defining one `profile` called `system`, as root, containing a nixosSystem, and you can even similarly use [home-manager](https://github.com/nix-community/home-manager) or [system-manager](https://github.com/numtide/system-manager).
 
 ```nix
 {
@@ -135,6 +135,15 @@ This is the core of how `deploy-rs` was designed, any number of these can run on
   profilePath = "/home/someuser/.local/state/nix/profiles/someprofile";
 
   # ...generic options... (see lower section)
+}
+```
+
+There are activation helpers for common profile types: `activate.nixos`, `activate.darwin`, `activate.home-manager`, and `activate.system-manager`.
+
+```nix
+{
+  # For outputs from `system-manager.lib.makeSystemConfig`
+  path = deploy-rs.lib.x86_64-linux.activate.system-manager self.systemConfigs.some-random-system;
 }
 ```
 

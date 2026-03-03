@@ -264,6 +264,8 @@ nix_state_dir="${{NIX_STATE_DIR:-/nix/var/nix}}"
 if [ "$profile_user" = "root" ]; then
   if [ "$profile_name" = "system" ]; then
     PROFILE_PATH="$nix_state_dir/profiles/system"
+  elif [ "$profile_name" = "system-manager" ]; then
+    PROFILE_PATH="$nix_state_dir/profiles/system-manager-profiles/system-manager"
   else
     PROFILE_PATH="$nix_state_dir/profiles/per-user/root/$profile_name"
   fi
@@ -480,6 +482,24 @@ fn test_review_changes_command_builder_with_explicit_profile_path() {
 
     assert!(command.contains("sh -c"));
     assert!(command.contains("/nix/var/nix/profiles/system"));
+    assert!(command.contains("/nix/store/new-profile"));
+    assert!(command.contains("diff-closures"));
+}
+
+#[test]
+fn test_review_changes_command_builder_with_system_manager_profile() {
+    let command = build_review_changes_command(
+        &None,
+        &ProfileInfo::ProfileUserAndName {
+            profile_user: "root".to_string(),
+            profile_name: "system-manager".to_string(),
+        },
+        "/nix/store/new-profile",
+    );
+
+    assert!(command.contains("sh -c"));
+    assert!(command.contains("profiles/system-manager-profiles/system-manager"));
+    assert!(command.contains("system-manager"));
     assert!(command.contains("/nix/store/new-profile"));
     assert!(command.contains("diff-closures"));
 }

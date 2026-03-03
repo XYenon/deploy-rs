@@ -257,29 +257,33 @@ fn build_profile_path_resolver(profile_info: &ProfileInfo) -> String {
         ProfileInfo::ProfileUserAndName {
             profile_user,
             profile_name,
-        } => format!(
-            r#"profile_user={profile_user}
+        } => {
+            if profile_user == "root" {
+                let profile_path = match &profile_name[..] {
+                    "system" => "/nix/var/nix/profiles/system".to_string(),
+                    "system-manager" => {
+                        "/nix/var/nix/profiles/system-manager-profiles/system-manager".to_string()
+                    }
+                    _ => format!("/nix/var/nix/profiles/per-user/root/{}", profile_name),
+                };
+
+                format!("PROFILE_PATH={}", shell_quote(&profile_path))
+            } else {
+                format!(
+                    r#"profile_user={profile_user}
 profile_name={profile_name}
 nix_state_dir="${{NIX_STATE_DIR:-/nix/var/nix}}"
-if [ "$profile_user" = "root" ]; then
-  if [ "$profile_name" = "system" ]; then
-    PROFILE_PATH="$nix_state_dir/profiles/system"
-  elif [ "$profile_name" = "system-manager" ]; then
-    PROFILE_PATH="$nix_state_dir/profiles/system-manager-profiles/system-manager"
-  else
-    PROFILE_PATH="$nix_state_dir/profiles/per-user/root/$profile_name"
-  fi
+old_user_profiles_dir="${{nix_state_dir}}/profiles/per-user/${{profile_user}}"
+if [ -d "${{old_user_profiles_dir}}" ]; then
+  PROFILE_PATH="${{old_user_profiles_dir}}/${{profile_name}}"
 else
-  old_user_profiles_dir="$nix_state_dir/profiles/per-user/$profile_user"
-  if [ -d "$old_user_profiles_dir" ]; then
-    PROFILE_PATH="$old_user_profiles_dir/$profile_name"
-  else
-    PROFILE_PATH="${{XDG_STATE_HOME:-$HOME/.local/state}}/nix/profiles/$profile_name"
-  fi
+  PROFILE_PATH="${{XDG_STATE_HOME:-${{HOME}}/.local/state}}/nix/profiles/${{profile_name}}"
 fi"#,
-            profile_user = shell_quote(profile_user),
-            profile_name = shell_quote(profile_name)
-        ),
+                    profile_user = shell_quote(profile_user),
+                    profile_name = shell_quote(profile_name)
+                )
+            }
+        }
     }
 }
 
@@ -295,18 +299,18 @@ if [ -z "${{PROFILE_PATH:-}}" ]; then
   echo "Unable to resolve profile path for derivation diff, skipping review."
   exit 0
 fi
-if [ ! -e "$PROFILE_PATH" ] && [ ! -h "$PROFILE_PATH" ]; then
-  echo "No existing generation found at $PROFILE_PATH, skipping derivation diff."
+if [ ! -e "${{PROFILE_PATH}}" ] && [ ! -h "${{PROFILE_PATH}}" ]; then
+  echo "No existing generation found at ${{PROFILE_PATH}}, skipping derivation diff."
   exit 0
 fi
-CURRENT_PROFILE="$(readlink -f "$PROFILE_PATH")"
-if [ "$CURRENT_PROFILE" = "$NEW_PROFILE" ]; then
-  echo "No derivation changes detected for $PROFILE_PATH."
+CURRENT_PROFILE="$(readlink -f "${{PROFILE_PATH}}")"
+if [ "${{CURRENT_PROFILE}}" = "${{NEW_PROFILE}}" ]; then
+  echo "No derivation changes detected for ${{PROFILE_PATH}}."
   exit 0
 fi
-echo "Derivation changes for $PROFILE_PATH:"
+echo "Derivation changes for ${{PROFILE_PATH}}:"
 if command -v nix >/dev/null 2>&1; then
-  if nix --experimental-features 'nix-command' store diff-closures "$CURRENT_PROFILE" "$NEW_PROFILE"; then
+  if nix --experimental-features 'nix-command' store diff-closures "${{CURRENT_PROFILE}}" "${{NEW_PROFILE}}"; then
     exit 0
   fi
 fi
@@ -498,8 +502,11 @@ fn test_review_changes_command_builder_with_system_manager_profile() {
     );
 
     assert!(command.contains("sh -c"));
+    assert!(command.contains("PROFILE_PATH="));
     assert!(command.contains("profiles/system-manager-profiles/system-manager"));
     assert!(command.contains("system-manager"));
+    assert!(!command.contains("profile_user="));
+    assert!(!command.contains("profile_name="));
     assert!(command.contains("/nix/store/new-profile"));
     assert!(command.contains("diff-closures"));
 }

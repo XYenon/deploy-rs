@@ -129,7 +129,8 @@ This is the core of how `deploy-rs` was designed, any number of these can run on
 
   # An optional path to where your profile should be installed to, this is useful if you want to use a common profile name across multiple users, but would have conflicts in your node's profile list.
   # This will default to `"/nix/var/nix/profiles/system` if `user` is `root` and profile name is `system`,
-  # `/nix/var/nix/profiles/per-user/root/$PROFILE_NAME` if profile name is different.
+  # `/nix/var/nix/profiles/system-manager-profiles/system-manager` if `user` is `root` and profile name is `system-manager`,
+  # and `/nix/var/nix/profiles/per-user/root/$PROFILE_NAME` for other root profile names.
   # For non-root profiles will default to /nix/var/nix/profiles/per-user/$USER/$PROFILE_NAME if `/nix/var/nix/profiles/per-user/$USER` already exists,
   # and `${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/$PROFILE_NAME` otherwise.
   profilePath = "/home/someuser/.local/state/nix/profiles/someprofile";

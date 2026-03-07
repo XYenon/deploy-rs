@@ -245,91 +245,29 @@ fn test_revoke_command_builder() {
     );
 }
 
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
-fn build_profile_path_resolver(profile_info: &ProfileInfo) -> String {
-    match profile_info {
-        ProfileInfo::ProfilePath { profile_path } => {
-            format!("PROFILE_PATH={}", shell_quote(profile_path))
-        }
-        ProfileInfo::ProfileUserAndName {
-            profile_user,
-            profile_name,
-        } => {
-            if profile_user == "root" {
-                let profile_path = match &profile_name[..] {
-                    "system" => "/nix/var/nix/profiles/system".to_string(),
-                    "system-manager" => {
-                        "/nix/var/nix/profiles/system-manager-profiles/system-manager".to_string()
-                    }
-                    _ => format!("/nix/var/nix/profiles/per-user/root/{}", profile_name),
-                };
-
-                format!("PROFILE_PATH={}", shell_quote(&profile_path))
-            } else {
-                format!(
-                    r#"profile_user={profile_user}
-profile_name={profile_name}
-nix_state_dir="${{NIX_STATE_DIR:-/nix/var/nix}}"
-old_user_profiles_dir="${{nix_state_dir}}/profiles/per-user/${{profile_user}}"
-if [ -d "${{old_user_profiles_dir}}" ]; then
-  PROFILE_PATH="${{old_user_profiles_dir}}/${{profile_name}}"
-else
-  PROFILE_PATH="${{XDG_STATE_HOME:-${{HOME}}/.local/state}}/nix/profiles/${{profile_name}}"
-fi"#,
-                    profile_user = shell_quote(profile_user),
-                    profile_name = shell_quote(profile_name)
-                )
-            }
-        }
-    }
-}
-
 fn build_review_changes_command(
     sudo: &Option<String>,
     profile_info: &ProfileInfo,
     closure: &str,
 ) -> String {
-    let script = format!(
-        r#"{profile_path_resolver}
-NEW_PROFILE={new_profile}
-if [ -z "${{PROFILE_PATH:-}}" ]; then
-  echo "Unable to resolve profile path for derivation diff, skipping review."
-  exit 0
-fi
-if [ ! -e "${{PROFILE_PATH}}" ] && [ ! -h "${{PROFILE_PATH}}" ]; then
-  echo "No existing generation found at ${{PROFILE_PATH}}, skipping derivation diff."
-  exit 0
-fi
-CURRENT_PROFILE="$(readlink -f "${{PROFILE_PATH}}")"
-if [ "${{CURRENT_PROFILE}}" = "${{NEW_PROFILE}}" ]; then
-  echo "No derivation changes detected for ${{PROFILE_PATH}}."
-  exit 0
-fi
-echo "Derivation changes for ${{PROFILE_PATH}}:"
-if command -v nix >/dev/null 2>&1; then
-  if nix --experimental-features 'nix-command' store diff-closures "${{CURRENT_PROFILE}}" "${{NEW_PROFILE}}"; then
-    exit 0
-  fi
-fi
-echo "Unable to run 'nix store diff-closures' on target host; continuing deployment."
-exit 0"#,
-        profile_path_resolver = build_profile_path_resolver(profile_info),
-        new_profile = shell_quote(closure)
-    );
+    let mut command = format!("{}/activate-rs dry-diff", closure);
 
-    // Replace newlines with shell-compatible separators to produce a single-line
-    // script. SSH command transmission can strip newlines, causing syntax errors
-    // on the remote side. Use spaces after `then`/`else` (not `;`) to avoid
-    // empty compound lists, and `;` elsewhere as a command separator.
-    let script = script
-        .replace("then\n", "then ")
-        .replace("else\n", "else ")
-        .replace('\n', "; ");
+    match profile_info {
+        ProfileInfo::ProfilePath { profile_path } => {
+            command.push_str(&format!(" --profile-path '{}'", profile_path));
+        }
+        ProfileInfo::ProfileUserAndName {
+            profile_user,
+            profile_name,
+        } => {
+            command.push_str(&format!(
+                " --profile-user '{}' --profile-name '{}'",
+                profile_user, profile_name
+            ));
+        }
+    }
 
-    let mut command = format!("sh -c {}", shell_quote(&script));
+    command.push_str(&format!(" '{}'", closure));
 
     if let Some(sudo_cmd) = sudo {
         command = format!("{} {}", sudo_cmd, command);
@@ -348,72 +286,6 @@ fn ansi_wrap(use_colors: bool, style: &str, text: &str) -> String {
 
 fn review_colors_enabled() -> bool {
     std::env::var_os("NO_COLOR").is_none()
-}
-
-fn colorize_size_delta(size_delta: &str, use_colors: bool) -> String {
-    if size_delta.starts_with('+') {
-        ansi_wrap(use_colors, "32", size_delta)
-    } else if size_delta.starts_with('-') {
-        ansi_wrap(use_colors, "31", size_delta)
-    } else {
-        size_delta.to_string()
-    }
-}
-
-fn highlight_diff_closures_line(line: &str, use_colors: bool) -> Option<String> {
-    let (package, change) = line.split_once(": ")?;
-
-    if let Some((versions, size_delta)) = change
-        .rsplit_once(", ")
-        .filter(|(_, delta)| delta.starts_with('+') || delta.starts_with('-'))
-    {
-        if let Some((before, after)) = versions.split_once(" → ") {
-            let (name_style, before_style, arrow_style, after_style) = if before.trim() == "∅" {
-                ("1;32", "2;31", "32", "32")
-            } else if after.trim() == "∅" {
-                ("1;31", "31", "31", "2;32")
-            } else {
-                ("1;33", "33", "33", "33")
-            };
-
-            return Some(format!(
-                "{}: {} {} {}, {}",
-                ansi_wrap(use_colors, name_style, package),
-                ansi_wrap(use_colors, before_style, before),
-                ansi_wrap(use_colors, arrow_style, "→"),
-                ansi_wrap(use_colors, after_style, after),
-                colorize_size_delta(size_delta, use_colors)
-            ));
-        }
-    }
-
-    if let Some((before, after)) = change.split_once(" → ") {
-        let (name_style, before_style, arrow_style, after_style) = if before.trim() == "∅" {
-            ("1;32", "2;31", "32", "32")
-        } else if after.trim() == "∅" {
-            ("1;31", "31", "31", "2;32")
-        } else {
-            ("1;33", "33", "33", "33")
-        };
-
-        return Some(format!(
-            "{}: {} {} {}",
-            ansi_wrap(use_colors, name_style, package),
-            ansi_wrap(use_colors, before_style, before),
-            ansi_wrap(use_colors, arrow_style, "→"),
-            ansi_wrap(use_colors, after_style, after),
-        ));
-    }
-
-    if change.starts_with('+') || change.starts_with('-') {
-        return Some(format!(
-            "{}: {}",
-            ansi_wrap(use_colors, "1;36", package),
-            colorize_size_delta(change, use_colors)
-        ));
-    }
-
-    None
 }
 
 fn highlight_review_line(line: &str, use_colors: bool) -> String {
@@ -437,7 +309,7 @@ fn highlight_review_line(line: &str, use_colors: bool) -> String {
         return ansi_wrap(use_colors, "31", line);
     }
 
-    highlight_diff_closures_line(line, use_colors).unwrap_or_else(|| line.to_string())
+    line.to_string()
 }
 
 fn highlight_review_output(output: &str, use_colors: bool) -> String {
@@ -470,11 +342,6 @@ fn print_review_output(output: &[u8], use_colors: bool, stderr: bool) {
 }
 
 #[test]
-fn test_shell_quote() {
-    assert_eq!(shell_quote("a'b"), "'a'\"'\"'b'");
-}
-
-#[test]
 fn test_review_changes_command_builder_with_explicit_profile_path() {
     let command = build_review_changes_command(
         &None,
@@ -484,10 +351,9 @@ fn test_review_changes_command_builder_with_explicit_profile_path() {
         "/nix/store/new-profile",
     );
 
-    assert!(command.contains("sh -c"));
-    assert!(command.contains("/nix/var/nix/profiles/system"));
-    assert!(command.contains("/nix/store/new-profile"));
-    assert!(command.contains("diff-closures"));
+    assert!(command.contains("/nix/store/new-profile/activate-rs dry-diff"));
+    assert!(command.contains("--profile-path '/nix/var/nix/profiles/system'"));
+    assert!(command.contains("'/nix/store/new-profile'"));
 }
 
 #[test]
@@ -501,30 +367,10 @@ fn test_review_changes_command_builder_with_system_manager_profile() {
         "/nix/store/new-profile",
     );
 
-    assert!(command.contains("sh -c"));
-    assert!(command.contains("PROFILE_PATH="));
-    assert!(command.contains("profiles/system-manager-profiles/system-manager"));
-    assert!(command.contains("system-manager"));
-    assert!(!command.contains("profile_user="));
-    assert!(!command.contains("profile_name="));
-    assert!(command.contains("/nix/store/new-profile"));
-    assert!(command.contains("diff-closures"));
-}
-
-#[test]
-fn test_highlight_diff_closures_line_without_color_change() {
-    assert_eq!(
-        highlight_diff_closures_line("bluez-qt: +12.6 KiB", false),
-        Some("bluez-qt: +12.6 KiB".to_string())
-    );
-}
-
-#[test]
-fn test_highlight_diff_closures_line_with_color_change() {
-    let rendered = highlight_diff_closures_line("kdeconnect: 20.08.2 → ∅, -6597.8 KiB", true);
-
-    assert!(rendered.is_some());
-    assert!(rendered.unwrap().contains("\x1b["));
+    assert!(command.contains("/nix/store/new-profile/activate-rs dry-diff"));
+    assert!(command.contains("--profile-user 'root'"));
+    assert!(command.contains("--profile-name 'system-manager'"));
+    assert!(command.contains("'/nix/store/new-profile'"));
 }
 
 #[test]

@@ -233,7 +233,7 @@ fn parse_fragment(fragment: &str) -> Result<(Option<String>, Option<String>), Pa
     Ok((node, profile))
 }
 
-pub fn parse_flake(flake: &str) -> Result<DeployFlake, ParseFlakeError> {
+pub fn parse_flake(flake: &str) -> Result<DeployFlake<'_>, ParseFlakeError> {
     let flake_fragment_start = flake.find('#');
     let (repo, maybe_fragment) = match flake_fragment_start {
         Some(s) => (&flake[..s], Some(&flake[s + 1..])),
